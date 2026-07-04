@@ -15,6 +15,7 @@ from typing import Dict, List, Optional, Tuple
 import bilibili_uid_checker as core
 from bilibili_uid_checker import (
     APP_DIR,
+    DEFAULT_DATA_DIR,
     MIN_UID_LENGTH,
     MAX_UID_LENGTH,
     DEFAULT_MIN_DELAY,
@@ -1417,12 +1418,12 @@ def _setup_storage(parent: tk.Tk) -> bool:
             )
 
     missing_path = saved_path if saved_path and not exists else None
-    default_dir = saved_path or os.path.join(APP_DIR, "数据")
+    default_dir = saved_path or DEFAULT_DATA_DIR
     required = getattr(sys, "frozen", False) or bool(missing_path)
 
     if not required:
         try:
-            configure_storage(APP_DIR)
+            configure_storage(DEFAULT_DATA_DIR)
         except ValueError:
             required = True
         else:

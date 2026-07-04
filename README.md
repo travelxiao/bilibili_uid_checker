@@ -11,13 +11,15 @@ bilibili_uid_checker/
 ├── bilibili_uid_checker.py   # 核心引擎（检查逻辑、存储、Chrome 连接）
 ├── gui.py                    # Tkinter 图形界面
 ├── assets/app.ico            # 应用图标
-├── scripts/build_icon.py     # 图标生成脚本
+├── data/                     # 默认运行数据目录（gitignore）
+├── scripts/
+│   ├── build_icon.py         # 图标生成
+│   └── start_chrome_*.bat/sh # Chrome 调试模式脚本（备用）
 ├── build_exe.bat             # Windows 打包
 ├── clean.bat                 # 清理构建缓存
 ├── bilibili_uid_checker.spec # PyInstaller 配置
 ├── requirements.txt          # 运行依赖
 ├── requirements-build.txt    # 打包依赖
-├── start_chrome_*.bat/sh     # Chrome 调试模式脚本（备用）
 └── dist/                     # 打包输出（gitignore）
 ```
 
@@ -94,9 +96,9 @@ build_exe.bat
 clean.bat
 
 # 手动启动 Chrome 调试模式（通常不需要）
-start_chrome_windows.bat   # Windows
-./start_chrome_macos.sh    # macOS
-./start_chrome_linux.sh    # Linux
+scripts/start_chrome_windows.bat   # Windows
+./scripts/start_chrome_macos.sh    # macOS
+./scripts/start_chrome_linux.sh    # Linux
 ```
 
 ## 关键配置
@@ -105,7 +107,7 @@ start_chrome_windows.bat   # Windows
 |--------|--------|------|
 | `DEBUGGING_PORT` | 9222 | Chrome CDP 调试端口 |
 | `MIN_DELAY / MAX_DELAY` | 2~5 秒 | 请求间隔 |
-| 数据目录 | 项目目录或用户指定 | 由 `app_config.json` 持久化 |
+| 数据目录 | `data/` 或用户指定 | 由 `app_config.json` 持久化 |
 
 ## 常见问题
 
@@ -122,7 +124,7 @@ start_chrome_windows.bat   # Windows
 
 ### 修改调试端口
 
-同时修改 `bilibili_uid_checker.py` 中的 `DEBUGGING_PORT` 与对应 `start_chrome_*.bat/sh` 脚本。
+同时修改 `bilibili_uid_checker.py` 中的 `DEBUGGING_PORT` 与 `scripts/start_chrome_*.bat/sh` 脚本。
 
 ## 开发说明
 

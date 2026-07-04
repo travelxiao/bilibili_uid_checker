@@ -36,7 +36,7 @@ copy /y "assets\app.ico" "dist\assets\" >nul
 copy /y "assets\app.ico" "dist\app.ico" >nul
 
 if not exist "dist\start_chrome_windows.bat" (
-    copy /y "start_chrome_windows.bat" "dist\" >nul
+    copy /y "scripts\start_chrome_windows.bat" "dist\" >nul
 )
 
 echo.

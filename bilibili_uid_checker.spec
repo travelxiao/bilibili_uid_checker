@@ -7,7 +7,7 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[
-        ('start_chrome_windows.bat', '.'),
+        ('scripts/start_chrome_windows.bat', '.'),
         ('assets/app.ico', 'assets'),
     ],
     hiddenimports=[

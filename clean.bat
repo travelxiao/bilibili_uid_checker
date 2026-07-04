@@ -13,5 +13,5 @@ if exist checker.log del /q checker.log
 if exist crash.log del /q crash.log
 
 echo [OK] 已清理 dist/ build/ __pycache__/ assets/app.png 及日志
-echo 提示: 运行数据（records.json lv0.json app_config.json 等）未删除
+echo 提示: data/ 运行数据目录未删除
 pause

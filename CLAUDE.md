@@ -16,7 +16,7 @@ python bilibili_uid_checker.py --cli    # 命令行
 build_exe.bat    # 打包 dist/BilibiliUIDChecker.exe
 clean.bat        # 清理 build/ 与 __pycache__
 
-start_chrome_windows.bat   # 手动 Chrome 调试模式（GUI 会自动启动，通常不需要）
+scripts/start_chrome_windows.bat   # 手动 Chrome 调试模式（GUI 会自动启动，通常不需要）
 ```
 
 ## 代码架构
@@ -26,6 +26,7 @@ start_chrome_windows.bat   # 手动 Chrome 调试模式（GUI 会自动启动，
 | `bilibili_uid_checker.py` | 核心引擎：`CheckerRunner`、`RecordStore`、`SafetyGuard`、Chrome 自动启动、存储配置 |
 | `gui.py` | Tkinter GUI：Lv0/命中/全部记录标签页、运行控制、存储目录设置 |
 | `scripts/build_icon.py` | 生成 `assets/app.ico`（Bilibili TV 风格多尺寸图标） |
+| `scripts/start_chrome_*.bat/sh` | 手动 Chrome 调试模式（备用） |
 | `bilibili_uid_checker.spec` | PyInstaller 单文件打包配置 |
 
 ### 核心类与函数
@@ -60,6 +61,7 @@ start_chrome_windows.bat   # 手动 Chrome 调试模式（GUI 会自动启动，
 
 - `DEBUGGING_PORT = 9222`
 - `APP_DIR`：脚本/exe 所在目录；打包后 `sys.frozen` 时使用 exe 目录
+- `DEFAULT_DATA_DIR`：`APP_DIR/data`，开发模式默认数据目录
 - `app_config.json`：持久化 `data_dir`（gitignore）
 - `get_app_icon_path()`：优先 exe 同目录 `assets/app.ico`，其次打包资源
 

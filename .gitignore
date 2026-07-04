@@ -1,4 +1,6 @@
-# 运行数据（默认在项目目录或用户自选数据目录）
+# 运行数据
+data/
+!data/.gitkeep
 result.txt
 result_*.txt
 records.json

@@ -33,10 +33,11 @@ def _app_dir() -> str:
 
 
 APP_DIR = _app_dir()
+DEFAULT_DATA_DIR = os.path.join(APP_DIR, "data")
 CONFIG_FILE = os.path.join(APP_DIR, "app_config.json")
 CHROME_PROFILE_DIR = os.path.join(APP_DIR, "chrome_temp_profile")
 
-DATA_DIR = APP_DIR
+DATA_DIR = DEFAULT_DATA_DIR
 OUTPUT_FILE = os.path.join(DATA_DIR, "result.txt")
 LV0_OUTPUT_FILE = os.path.join(DATA_DIR, "lv0.txt")
 RECORDS_FILE = os.path.join(DATA_DIR, "records.json")
@@ -202,14 +203,14 @@ def _init_default_storage():
     """模块加载时仅设置默认路径，不做磁盘探测。"""
     global DATA_DIR, OUTPUT_FILE, LV0_OUTPUT_FILE, RECORDS_FILE, HITS_FILE
     global LV0_FILE, RECORDS_JSONL_LEGACY, LOG_FILE
-    DATA_DIR = APP_DIR
-    OUTPUT_FILE = os.path.join(APP_DIR, "result.txt")
-    LV0_OUTPUT_FILE = os.path.join(APP_DIR, "lv0.txt")
-    RECORDS_FILE = os.path.join(APP_DIR, "records.json")
-    HITS_FILE = os.path.join(APP_DIR, "hits.json")
-    LV0_FILE = os.path.join(APP_DIR, "lv0.json")
-    RECORDS_JSONL_LEGACY = os.path.join(APP_DIR, "records.jsonl")
-    LOG_FILE = os.path.join(APP_DIR, "checker.log")
+    DATA_DIR = DEFAULT_DATA_DIR
+    OUTPUT_FILE = os.path.join(DEFAULT_DATA_DIR, "result.txt")
+    LV0_OUTPUT_FILE = os.path.join(DEFAULT_DATA_DIR, "lv0.txt")
+    RECORDS_FILE = os.path.join(DEFAULT_DATA_DIR, "records.json")
+    HITS_FILE = os.path.join(DEFAULT_DATA_DIR, "hits.json")
+    LV0_FILE = os.path.join(DEFAULT_DATA_DIR, "lv0.json")
+    RECORDS_JSONL_LEGACY = os.path.join(DEFAULT_DATA_DIR, "records.jsonl")
+    LOG_FILE = os.path.join(DEFAULT_DATA_DIR, "checker.log")
 
 
 _init_default_storage()
@@ -1261,7 +1262,7 @@ def main_cli():
     if saved_path and exists:
         configure_storage(saved_path)
     else:
-        configure_storage(APP_DIR)
+        configure_storage(DEFAULT_DATA_DIR)
 
     logger.info("=" * 55)
     logger.info("   Bilibili UID 检查器 — CLI 模式")
