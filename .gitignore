@@ -1,4 +1,4 @@
-# 输出文件
+# 运行数据（默认在项目目录或用户自选数据目录）
 result.txt
 result_*.txt
 records.json
@@ -7,6 +7,7 @@ hits.json
 lv0.json
 lv0.txt
 checker.log
+crash.log
 app_config.json
 
 # Python
@@ -39,3 +40,6 @@ chrome_temp_profile/
 
 # PyInstaller
 *.spec.bak
+
+# 构建产物（由 scripts/build_icon.py 生成）
+assets/app.png

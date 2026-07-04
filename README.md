@@ -1,28 +1,30 @@
 # Bilibili UID 检查器
 
-随机生成 7 位 UID 访问 B 站用户空间，自动筛选「乱码英文用户名 + 0 级」的异常账号并记录。
+随机生成 UID 访问 B 站用户空间，筛选「乱码英文用户名 + Lv0」的疑似机器注册账号，并提供 GUI 与 exe 打包。
 
-## 视频教程
-
-[https://www.bilibili.com/video/BV1xjAMzsEsB](https://www.bilibili.com/video/BV1xjAMzsEsB)
+[视频教程](https://www.bilibili.com/video/BV1xjAMzsEsB)
 
 ## 项目结构
 
 ```
-bilibili_uid_check/
-├── bilibili_uid_checker.py      # 主程序
-├── start_chrome_windows.bat     # Windows Chrome 启动脚本
-├── start_chrome_macos.sh        # macOS Chrome 启动脚本
-├── start_chrome_linux.sh        # Linux Chrome 启动脚本
-├── result.txt                   # 检查结果输出文件
-└── requirements.txt             # Python 依赖
+bilibili_uid_checker/
+├── bilibili_uid_checker.py   # 核心引擎（检查逻辑、存储、Chrome 连接）
+├── gui.py                    # Tkinter 图形界面
+├── assets/app.ico            # 应用图标
+├── scripts/build_icon.py     # 图标生成脚本
+├── build_exe.bat             # Windows 打包
+├── clean.bat                 # 清理构建缓存
+├── bilibili_uid_checker.spec # PyInstaller 配置
+├── requirements.txt          # 运行依赖
+├── requirements-build.txt    # 打包依赖
+├── start_chrome_*.bat/sh     # Chrome 调试模式脚本（备用）
+└── dist/                     # 打包输出（gitignore）
 ```
 
 ## 环境要求
 
-- **Python** 3.7+
-- **Google Chrome** 浏览器
-- **DrissionPage** Python 库
+- Python 3.7+
+- Google Chrome
 
 ## 安装
 
@@ -30,124 +32,99 @@ bilibili_uid_check/
 pip install -r requirements.txt
 ```
 
----
-
 ## 快速开始
 
-整个流程分两步：**启动 Chrome** → **运行脚本**。
-
-> [!WARNING]
-> 启动前请先**完全关闭**所有 Chrome 窗口和进程，否则调试端口无法生效。
-
-### 第一步：启动 Chrome
-
-根据你的操作系统，运行对应的启动脚本。脚本会以 **无用户态 + 调试端口 9222** 的方式启动 Chrome，不会影响你日常的 Chrome 配置。
-
-#### Windows
-
-双击运行 `start_chrome_windows.bat`，或在 CMD 中执行：
-
-```cmd
-start_chrome_windows.bat
-```
-
-> 脚本会自动检测常见安装路径（`Program Files` / `Program Files (x86)`）。如果 Chrome 安装在非默认位置，请编辑脚本修改路径。
-
-#### macOS
-
-在终端中执行：
+### 方式一：GUI（推荐）
 
 ```bash
-chmod +x start_chrome_macos.sh   # 首次使用需要赋予执行权限
-./start_chrome_macos.sh
-```
-
-#### Linux
-
-在终端中执行：
-
-```bash
-chmod +x start_chrome_linux.sh   # 首次使用需要赋予执行权限
-./start_chrome_linux.sh
-```
-
-> 脚本会自动检测 `google-chrome`、`google-chrome-stable` 等常见命令。未安装时会提示安装方法。
-
-### 第二步：运行检查程序
-
-Chrome 启动成功后，**另开一个终端窗口**运行：
-
-```bash
-# macOS / Linux
-python3 bilibili_uid_checker.py
-
-# Windows
 python bilibili_uid_checker.py
 ```
 
-### 操作流程
+程序会自动尝试启动 Chrome 调试模式，无需手动运行启动脚本。首次运行 exe 时会提示选择**数据存储目录**，配置保存在 `app_config.json`。
 
-1. 程序启动后提示输入 **UID 前缀数字**（支持1位或2位，如 `5` 或 `31`）
-2. 输入后自动开始循环检查，控制台实时显示结果
-3. 符合条件的账号自动写入 `result.txt`
-4. 随时按 **Ctrl+C** 停止程序
+### 方式二：命令行
 
----
+```bash
+python bilibili_uid_checker.py --cli
+```
 
-## 筛选规则
+### 方式三：Windows 可执行文件
 
-必须**同时满足**以下所有条件，账号才会被记录：
+```bash
+build_exe.bat
+```
+
+输出 `dist/BilibiliUIDChecker.exe`，双击即可运行。
+
+## 记录分类
+
+| 类型 | 条件 | 文件 |
+|------|------|------|
+| Lv0 账号 | 任意 Lv0 用户 | `lv0.json` / `lv0.txt` |
+| 命中账号 | 乱码英文名 + Lv0 | `hits.json` / `result.txt` |
+| 全部记录 | 每次检查 | `records.json` |
+
+数据目录可在 GUI 菜单 **文件 → 更改数据存储位置** 中修改。
+
+## 筛选规则（命中账号）
+
+必须**同时满足**：
 
 | 条件 | 说明 |
 |------|------|
-| 全小写英文 | 用户名仅由 a-z 组成，无数字、中文、特殊字符 |
-| 长度 6~12 | 过短或过长的用户名排除 |
-| 辅音占比 > 60% | 乱码用户名通常辅音密集 |
-| 无常见英文子串 | 不含 game、love、the、ing 等 100+ 常见单词 |
-| 等级 Lv0 | 用户等级必须为 0 级 |
+| 全小写英文 | 仅 a-z，无数字、中文、符号 |
+| 长度 6~12 | |
+| 辅音占比 > 60% | |
+| 无常见英文子串 | 100+ 黑名单词条 |
+| 等级 Lv0 | |
 
-## 输出格式
+## 常用命令
 
-`result.txt` 中每条记录格式如下：
+```bash
+# GUI
+python bilibili_uid_checker.py
 
+# CLI
+python bilibili_uid_checker.py --cli
+
+# 打包 exe
+build_exe.bat
+
+# 清理 build/ 与 __pycache__
+clean.bat
+
+# 手动启动 Chrome 调试模式（通常不需要）
+start_chrome_windows.bat   # Windows
+./start_chrome_macos.sh    # macOS
+./start_chrome_linux.sh    # Linux
 ```
-UID: 1234567 | 用户名: xbjulymph
-UID: 3987654 | 用户名: fmxhgdxfl
-```
 
----
+## 关键配置
 
-## 启动参数说明
-
-Chrome 启动脚本中使用了以下参数：
-
-| 参数 | 作用 |
-|------|------|
-| `--remote-debugging-port=9222` | 开启调试端口，供 Python 脚本连接控制浏览器 |
-| `--no-first-run` | 跳过 Chrome 首次运行的欢迎向导 |
-| `--no-default-browser-check` | 跳过默认浏览器检查弹窗 |
-| `--user-data-dir=<临时路径>` | 使用临时目录作为用户数据目录（无用户态核心参数），不影响日常 Chrome 配置 |
-
----
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| `DEBUGGING_PORT` | 9222 | Chrome CDP 调试端口 |
+| `MIN_DELAY / MAX_DELAY` | 2~5 秒 | 请求间隔 |
+| 数据目录 | 项目目录或用户指定 | 由 `app_config.json` 持久化 |
 
 ## 常见问题
 
 ### 连接 Chrome 失败
 
-- 确保运行了对应系统的启动脚本，且 Chrome 窗口已打开
-- 确保启动前**完全关闭**了所有旧的 Chrome 进程：
-  - **macOS**：在活动监视器中搜索 `Chrome`，全部退出
-  - **Windows**：打开任务管理器，结束所有 `chrome.exe` 进程
-  - **Linux**：执行 `pkill -f chrome`
+- 确保本机已安装 Google Chrome
+- 关闭占用 9222 端口的旧 Chrome 进程后重试
+- GUI 会在启动约 1 秒后自动尝试连接 Chrome
+
+### exe 无法打开 / 无窗口
+
+- 首次运行需选择数据存储目录；若之前目录已删除，按提示重新选择
+- 查看 exe 同目录下的 `crash.log`
 
 ### 修改调试端口
 
-默认调试端口为 `9222`。如需更改：
+同时修改 `bilibili_uid_checker.py` 中的 `DEBUGGING_PORT` 与对应 `start_chrome_*.bat/sh` 脚本。
 
-1. 修改启动脚本中的端口号
-2. 同时修改 `bilibili_uid_checker.py` 中的 `DEBUGGING_PORT` 变量
+## 开发说明
 
-### 无法获取用户名或等级
-
-- B 站页面结构可能更新，检查控制台报错信息
-- 确保网络正常，页面能完整加载
+- 浏览器自动化：[DrissionPage](https://github.com/g1879/DrissionPage)（CDP 协议，无需 chromedriver）
+- B 站页面 DOM 变更时，需适配 `get_username()` / `get_user_level()` 中的选择器

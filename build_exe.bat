@@ -8,7 +8,7 @@ echo.
 cd /d "%~dp0"
 
 echo [*] 安装依赖...
-py -m pip install -r requirements.txt pyinstaller -q
+py -m pip install -r requirements-build.txt -q
 if errorlevel 1 (
     echo [X] 依赖安装失败
     pause

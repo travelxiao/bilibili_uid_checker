@@ -1,62 +1,82 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+本文件为 Claude Code 在此仓库中工作时提供指引。
 
 ## 项目概述
 
-Bilibili UID 检查器 — 通过 DrissionPage 驱动本地 Chrome 浏览器，随机生成 7 位 UID 访问 B 站用户空间，自动筛选「乱码英文用户名 + 0 级」的疑似机器注册账号并记录到 `result.txt`。
+Bilibili UID 检查器 — 通过 DrissionPage 连接本地 Chrome（CDP 9222），随机生成 UID 访问 B 站用户空间，筛选疑似机器注册账号。支持 GUI、CLI 与 PyInstaller 单文件 exe。
 
 ## 常用命令
 
 ```bash
-# 安装依赖
 pip install -r requirements.txt
+python bilibili_uid_checker.py          # GUI（默认）
+python bilibili_uid_checker.py --cli    # 命令行
 
-# 运行主程序（需先启动 Chrome 调试模式）
-python bilibili_uid_checker.py
+build_exe.bat    # 打包 dist/BilibiliUIDChecker.exe
+clean.bat        # 清理 build/ 与 __pycache__
 
-# Windows 启动 Chrome 调试模式
-start_chrome_windows.bat
-
-# macOS 启动 Chrome 调试模式
-chmod +x start_chrome_macos.sh && ./start_chrome_macos.sh
-
-# Linux 启动 Chrome 调试模式
-chmod +x start_chrome_linux.sh && ./start_chrome_linux.sh
+start_chrome_windows.bat   # 手动 Chrome 调试模式（GUI 会自动启动，通常不需要）
 ```
 
 ## 代码架构
 
-- **单文件项目**：`bilibili_uid_checker.py` (~250 行)
-- **浏览器自动化**：DrissionPage（基于 CDP 协议连接本地 Chrome 9222 端口）
-- **无 WebDriver**：不需要 chromedriver，直接通过 Chrome DevTools Protocol 控制
-
-### 核心模块
-
-| 函数 | 职责 |
+| 文件 | 职责 |
 |------|------|
-| `is_gibberish_name(name)` | 乱码用户名判定（纯小写英文 + 6~12位 + 辅音>60% + 无常见子串） |
-| `get_user_level(page)` | CSS 选择器从 B 站空间页提取 `user_level_X` |
-| `get_username(page)` | CSS 选择器从 B 站空间页提取用户名 |
-| `main()` | 主循环：生成随机 UID → 访问页面 → 提取信息 → 判定记录 |
+| `bilibili_uid_checker.py` | 核心引擎：`CheckerRunner`、`RecordStore`、`SafetyGuard`、Chrome 自动启动、存储配置 |
+| `gui.py` | Tkinter GUI：Lv0/命中/全部记录标签页、运行控制、存储目录设置 |
+| `scripts/build_icon.py` | 生成 `assets/app.ico`（Bilibili TV 风格多尺寸图标） |
+| `bilibili_uid_checker.spec` | PyInstaller 单文件打包配置 |
 
-### 筛选规则（必须同时满足）
+### 核心类与函数
 
-1. 仅由小写英文字母 a-z 组成
+| 符号 | 职责 |
+|------|------|
+| `analyze_gibberish()` / `is_gibberish_name()` | 乱码用户名评分与判定 |
+| `evaluate_account()` | 综合用户名 + 等级判定 |
+| `CheckerRunner` | 检查主循环（DrissionPage 延迟导入） |
+| `RecordStore` | JSON 持久化（records / hits / lv0） |
+| `ensure_chrome_debug()` | 检测并自动启动 Chrome |
+| `configure_storage()` | 设置数据目录与输出文件路径 |
+| `launch_gui()` | GUI 入口，含首次存储目录对话框 |
+
+### 记录类型
+
+| status | 条件 | 文件 |
+|--------|------|------|
+| `lv0` | Lv0 用户 | `lv0.json`, `lv0.txt` |
+| `hit` | 乱码英文 + Lv0 | `hits.json`, `result.txt` |
+| （全部） | 每次检查 | `records.json` |
+
+### 筛选规则（命中，须同时满足）
+
+1. 仅小写英文字母 a-z
 2. 长度 6~12
-3. 辅音字母占比 > 60%
+3. 辅音占比 > 60%
 4. 不含 100+ 常见英文/拼音子串
-5. 用户等级为 Lv0
+5. 用户等级 Lv0
 
 ## 关键配置
 
-- `DEBUGGING_PORT = 9222`：Chrome 调试端口（需与启动脚本一致）
-- `MIN_DELAY / MAX_DELAY`：请求间隔 2~5 秒
-- `OUTPUT_FILE`：结果输出路径（`result.txt`，脚本同目录）
-- `COMMON_SUBSTRINGS`：常见英文/拼音子串黑名单（100+ 条目）
+- `DEBUGGING_PORT = 9222`
+- `APP_DIR`：脚本/exe 所在目录；打包后 `sys.frozen` 时使用 exe 目录
+- `app_config.json`：持久化 `data_dir`（gitignore）
+- `get_app_icon_path()`：优先 exe 同目录 `assets/app.ico`，其次打包资源
+
+## 打包注意
+
+- `build_exe.bat` 使用 `requirements-build.txt`（含 PyInstaller、Pillow）
+- 打包后复制 `app.ico` 到 `dist/` 与 `dist/assets/`
+- `upx=False` 以加快 exe 冷启动
+- frozen 模式异常写入 `crash.log`
+
+## GUI 启动要点
+
+- `launch_gui()` 先 `withdraw()` 再 `_setup_storage()`；弹窗前必须 `deiconify()`，否则 Windows 下模态框不可见
+- 历史记录与 Chrome 连接延迟加载（10ms / 1200ms）以加快界面显示
 
 ## 注意事项
 
-- 启动前必须完全关闭所有 Chrome 进程，否则调试端口无法生效
-- B 站页面 DOM 结构可能更新，选择器 `.nickname` 和 `i.level-icon` 可能需要适配
-- 仅依赖 DrissionPage 一个第三方库
+- DrissionPage 仅在 `CheckerRunner._run` 内导入，避免拖慢 exe 启动
+- B 站 DOM 更新时需适配 `.nickname`、`i.level-icon` 等选择器
+- 运行数据文件（`records.json`、`lv0.json` 等）均在 gitignore 中，勿提交
