@@ -19,6 +19,28 @@
 
 ---
 
+## 贡献者
+
+感谢以下贡献者（按参与时间排序）：
+
+| 贡献者 | GitHub | 主要贡献 |
+|--------|--------|----------|
+| **f1shQAQ** | [@f1shQAQ](https://github.com/f1shQAQ) | 项目原创、UID 检查核心逻辑、乱码判定算法、Chrome 调试脚本 |
+| **travelxiao** | [@travelxiao](https://github.com/travelxiao) | GUI 界面、exe 打包、自动 Chrome、分类存储、安全加固、文档与 Release |
+
+<!-- ALL-CONTRIBUTORS-LIST:START -->
+<!-- prettier-ignore-start -->
+<!-- markdownlint-disable -->
+
+<a href="https://github.com/f1shQAQ"><img src="https://github.com/f1shQAQ.png" width="64" height="64" alt="f1shQAQ" style="border-radius:50%"/></a>
+<a href="https://github.com/travelxiao"><img src="https://github.com/travelxiao.png" width="64" height="64" alt="travelxiao" style="border-radius:50%"/></a>
+
+<!-- markdownlint-restore -->
+<!-- prettier-ignore-end -->
+<!-- ALL-CONTRIBUTORS-LIST:END -->
+
+---
+
 ## 功能特性
 
 | 功能 | 说明 |
@@ -236,6 +258,7 @@ Chrome 启动参数：
 
 ## 致谢
 
+- 感谢所有[贡献者](#贡献者)的参与与贡献
 - 感谢原作者 [@f1shQAQ](https://github.com/f1shQAQ) 的开源项目 [bilibili_uid_checker](https://github.com/f1shQAQ/bilibili_uid_checker)
 - 感谢 [DrissionPage](https://github.com/g1879/DrissionPage) 提供的浏览器自动化能力
 
@@ -245,4 +268,4 @@ Chrome 启动参数：
 
 本项目遵循上游仓库的开源协议。Fork 版本的增强功能同样开源共享，欢迎 Issue 与 Pull Request。
 
-**维护者：** [@travelxiao](https://github.com/travelxiao) · **原作者：** [@f1shQAQ](https://github.com/f1shQAQ)
+**贡献者：** [@f1shQAQ](https://github.com/f1shQAQ) · [@travelxiao](https://github.com/travelxiao)
