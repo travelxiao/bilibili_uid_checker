@@ -2,8 +2,6 @@
 
 批量扫描哔哩哔哩早年被注册机批量注册、长期无人使用的 UID 账号。通过 DrissionPage 驱动本地 Chrome，随机生成 UID 访问 B 站用户空间，自动筛选「乱码英文用户名 + Lv0」的疑似机器注册账号，并提供 **GUI 图形界面**、**命令行模式** 与 **Windows exe 打包**。
 
-[📺 视频教程](https://www.bilibili.com/video/BV1xjAMzsEsB)
-
 ---
 
 ## 作者与仓库
