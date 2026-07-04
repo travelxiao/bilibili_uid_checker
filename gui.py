@@ -6,18 +6,15 @@ import os
 import queue
 import subprocess
 import sys
+import threading
 import webbrowser
 import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext, filedialog
 from typing import Dict, List, Optional, Tuple
 
+import bilibili_uid_checker as core
 from bilibili_uid_checker import (
-    RECORDS_FILE,
-    HITS_FILE,
-    LV0_FILE,
-    LV0_OUTPUT_FILE,
-    OUTPUT_FILE,
-    OUTPUT_FILE,
+    APP_DIR,
     MIN_UID_LENGTH,
     MAX_UID_LENGTH,
     DEFAULT_MIN_DELAY,
@@ -33,6 +30,11 @@ from bilibili_uid_checker import (
     CheckerStats,
     RecordStore,
     validate_config,
+    ensure_chrome_debug,
+    configure_storage,
+    save_storage_config,
+    load_storage_config,
+    get_data_dir,
 )
 
 FONT_UI = ("Microsoft YaHei UI", 9)
@@ -98,6 +100,95 @@ COLUMN_LABELS = {
 }
 
 
+class StorageSetupDialog(tk.Toplevel):
+    """启动时选择数据存储目录。"""
+
+    def __init__(self, parent: tk.Tk, initial_dir: str, *, required: bool = True):
+        super().__init__(parent)
+        self.title("选择数据存储位置")
+        self.resizable(False, False)
+        self.result: Optional[str] = None
+        self._required = required
+
+        self.transient(parent)
+        self.grab_set()
+
+        frame = ttk.Frame(self, padding=16)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(
+            frame,
+            text="请选择检查记录的保存目录",
+            font=FONT_UI_BOLD,
+        ).pack(anchor=tk.W)
+        ttk.Label(
+            frame,
+            text="lv0.json、hits.json、records.json、result.txt 等将保存在此目录",
+            foreground=COLORS["muted"],
+            font=FONT_UI,
+        ).pack(anchor=tk.W, pady=(4, 10))
+
+        path_row = ttk.Frame(frame)
+        path_row.pack(fill=tk.X, pady=(0, 12))
+        path_row.columnconfigure(0, weight=1)
+
+        self.path_var = tk.StringVar(value=initial_dir)
+        ttk.Entry(path_row, textvariable=self.path_var).grid(row=0, column=0, sticky=tk.EW, padx=(0, 8))
+        ttk.Button(path_row, text="浏览…", command=self._browse).grid(row=0, column=1)
+
+        btn_row = ttk.Frame(frame)
+        btn_row.pack(fill=tk.X)
+        ttk.Button(btn_row, text="确定", command=self._confirm).pack(side=tk.RIGHT)
+        if not required:
+            ttk.Button(btn_row, text="取消", command=self._cancel).pack(side=tk.RIGHT, padx=(0, 8))
+
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.bind("<Return>", lambda e: self._confirm())
+
+        self.update_idletasks()
+        w, h = self.winfo_width(), self.winfo_height()
+        x = parent.winfo_x() + (parent.winfo_width() - w) // 2
+        y = parent.winfo_y() + (parent.winfo_height() - h) // 2
+        self.geometry(f"+{x}+{y}")
+
+    def _browse(self):
+        folder = filedialog.askdirectory(
+            title="选择数据存储目录",
+            initialdir=self.path_var.get() or APP_DIR,
+        )
+        if folder:
+            self.path_var.set(folder)
+
+    def _confirm(self):
+        path = self.path_var.get().strip()
+        if not path:
+            messagebox.showwarning("提示", "请选择或输入一个有效目录。", parent=self)
+            return
+        try:
+            os.makedirs(path, exist_ok=True)
+        except OSError as e:
+            messagebox.showerror("错误", f"无法创建目录:\n{e}", parent=self)
+            return
+        self.result = os.path.abspath(path)
+        self.grab_release()
+        self.destroy()
+
+    def _cancel(self):
+        self.result = None
+        self.grab_release()
+        self.destroy()
+
+    def _on_close(self):
+        if self._required:
+            if not messagebox.askyesno(
+                "确认退出",
+                "未选择存储目录，程序将退出。是否退出？",
+                parent=self,
+            ):
+                return
+        self._cancel()
+
+
 class CheckerApp:
     def __init__(self, root: tk.Tk):
         self.root = root
@@ -124,6 +215,12 @@ class CheckerApp:
         self._build_ui()
         self._load_history_records()
         self._poll_queues()
+        threading.Thread(target=self._auto_start_chrome, daemon=True).start()
+
+    def _auto_start_chrome(self):
+        ok, err = ensure_chrome_debug(on_log=lambda msg: self.log_queue.put(msg))
+        if not ok:
+            self.log_queue.put(f"Chrome 自动启动失败: {err}")
 
     def _setup_styles(self):
         style = ttk.Style()
@@ -170,11 +267,13 @@ class CheckerApp:
 
         file_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="文件", menu=file_menu)
-        file_menu.add_command(label="打开 lv0.json", command=lambda: self._open_file(LV0_FILE))
-        file_menu.add_command(label="打开 hits.json", command=lambda: self._open_file(HITS_FILE))
-        file_menu.add_command(label="打开 records.json", command=lambda: self._open_file(RECORDS_FILE))
-        file_menu.add_command(label="打开 lv0.txt", command=lambda: self._open_file(LV0_OUTPUT_FILE))
-        file_menu.add_command(label="打开 result.txt", command=lambda: self._open_file(OUTPUT_FILE))
+        file_menu.add_command(label="打开 lv0.json", command=lambda: self._open_file(core.LV0_FILE))
+        file_menu.add_command(label="打开 hits.json", command=lambda: self._open_file(core.HITS_FILE))
+        file_menu.add_command(label="打开 records.json", command=lambda: self._open_file(core.RECORDS_FILE))
+        file_menu.add_command(label="打开 lv0.txt", command=lambda: self._open_file(core.LV0_OUTPUT_FILE))
+        file_menu.add_command(label="打开 result.txt", command=lambda: self._open_file(core.OUTPUT_FILE))
+        file_menu.add_separator()
+        file_menu.add_command(label="更改数据存储位置…", command=self._change_storage_dir)
         file_menu.add_separator()
         file_menu.add_command(label="退出", command=self.root.destroy)
 
@@ -188,7 +287,7 @@ class CheckerApp:
         lv0_menu.add_command(label="导出 Lv0 列表为文本…", command=self._export_lv0_txt)
         lv0_menu.add_separator()
         lv0_menu.add_command(label="在浏览器打开选中账号", command=lambda: self._open_selected_in_browser(self.lv0_tree, self.lv0_records))
-        lv0_menu.add_command(label="打开 lv0.json", command=lambda: self._open_file(LV0_FILE))
+        lv0_menu.add_command(label="打开 lv0.json", command=lambda: self._open_file(core.LV0_FILE))
 
         hit_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="命中账号", menu=hit_menu)
@@ -200,7 +299,7 @@ class CheckerApp:
         hit_menu.add_command(label="导出命中列表为文本…", command=self._export_hit_txt)
         hit_menu.add_separator()
         hit_menu.add_command(label="在浏览器打开选中账号", command=lambda: self._open_selected_in_browser(self.hit_tree, self.hit_records))
-        hit_menu.add_command(label="打开 hits.json", command=lambda: self._open_file(HITS_FILE))
+        hit_menu.add_command(label="打开 hits.json", command=lambda: self._open_file(core.HITS_FILE))
 
         view_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="查看", menu=view_menu)
@@ -225,8 +324,26 @@ class CheckerApp:
         self._build_notebook(root_frame)
         self._build_status_bar(root_frame)
 
-        self._append_log("就绪。已启用定时休息与请求限速，降低 B 站风控风险。")
-        self._append_log(f"Lv0 数据: {LV0_FILE} | 命中数据: {HITS_FILE}")
+        self._append_log("就绪。程序将自动启动 Chrome，无需手动配置。")
+        self._append_log(f"数据目录: {get_data_dir()}")
+        self._append_log(f"Lv0 数据: {core.LV0_FILE} | 命中数据: {core.HITS_FILE}")
+
+    def _update_data_dir_label(self):
+        self.data_dir_label.config(text=f"数据存储: {get_data_dir()}")
+
+    def _change_storage_dir(self):
+        if self.runner and self.runner.is_running:
+            messagebox.showwarning("提示", "请先停止检查，再更改存储目录。")
+            return
+        dlg = StorageSetupDialog(self.root, get_data_dir(), required=False)
+        self.root.wait_window(dlg)
+        if not dlg.result:
+            return
+        configure_storage(dlg.result)
+        save_storage_config(dlg.result)
+        self._update_data_dir_label()
+        self._load_history_records()
+        self._append_log(f"已切换数据目录: {dlg.result}")
 
     def _build_header(self, parent):
         header = ttk.Frame(parent, style="Header.TFrame", padding=(12, 10))
@@ -236,9 +353,17 @@ class CheckerApp:
         ttk.Label(header, text="Bilibili UID 检查器", style="Title.TLabel").grid(row=0, column=0, sticky=tk.W)
         ttk.Label(
             header,
-            text="Lv0 账号与乱码命中分开记录 · 请先以调试端口启动 Chrome",
+            text="双击 exe 即可使用 · 程序会自动启动 Chrome · Lv0 与命中分开记录",
             style="SubTitle.TLabel",
         ).grid(row=1, column=0, sticky=tk.W, pady=(2, 0))
+        self.data_dir_label = ttk.Label(
+            header,
+            text="",
+            style="SubTitle.TLabel",
+            foreground=COLORS["lv0_fg"],
+        )
+        self.data_dir_label.grid(row=2, column=0, sticky=tk.W, pady=(2, 0))
+        self._update_data_dir_label()
 
     def _build_config_row(self, parent):
         config_row = ttk.Panedwindow(parent, orient=tk.HORIZONTAL)
@@ -410,7 +535,11 @@ class CheckerApp:
 
         ttk.Button(toolbar, text="复制 UID", command=self._copy_all_lv0_uids).grid(row=0, column=3, padx=(0, 6))
         ttk.Button(toolbar, text="复制 UID+名", command=self._copy_lv0_uid_names).grid(row=0, column=4, padx=(0, 6))
-        ttk.Button(toolbar, text="浏览器打开", command=self._open_selected_lv0_in_browser).grid(row=0, column=5, padx=(0, 12))
+        ttk.Button(
+            toolbar,
+            text="浏览器打开",
+            command=lambda: self._open_selected_in_browser(self.lv0_tree, self.lv0_records),
+        ).grid(row=0, column=5, padx=(0, 12))
 
         self.lv0_count_label = ttk.Label(
             toolbar,
@@ -868,12 +997,12 @@ class CheckerApp:
     def _show_help(self):
         messagebox.showinfo(
             "使用说明",
-            "1. 先运行 start_chrome_windows.bat 启动 Chrome 调试模式\n"
-            "2. 配置 UID 前缀与长度，点击「开始检查」\n"
-            "3. 所有 Lv0 账号记录到 lv0.json / lv0.txt\n"
-            "4. 乱码名+Lv0 命中账号记录到 hits.json / result.txt\n"
-            "5. 菜单「Lv0 账号」「命中账号」可分别管理两类列表\n"
-            "6. 单击单元格复制，双击行打开 B 站空间",
+            "1. 启动后先选择数据存储目录（记录文件保存位置）\n"
+            "2. 双击 BilibiliUIDChecker.exe 即可运行（会自动启动 Chrome）\n"
+            "3. 配置 UID 前缀与长度，点击「开始检查」\n"
+            "4. 所有 Lv0 账号记录到 lv0.json / lv0.txt\n"
+            "5. 乱码名+Lv0 命中账号记录到 hits.json / result.txt\n"
+            "6. 菜单「文件」可更改数据存储位置",
         )
 
     def _get_uid_from_tree(self, tree: ttk.Treeview) -> Optional[int]:
@@ -1191,7 +1320,36 @@ class CheckerApp:
             subprocess.run(["xdg-open", path], check=False)
 
 
+def _setup_storage(parent: tk.Tk) -> bool:
+    """启动前配置数据存储目录。exe 必须选择，脚本模式使用已保存或默认目录。"""
+    saved = load_storage_config()
+    default_dir = saved or os.path.join(APP_DIR, "数据")
+
+    if getattr(sys, "frozen", False):
+        dlg = StorageSetupDialog(parent, default_dir, required=True)
+        parent.wait_window(dlg)
+        if not dlg.result:
+            return False
+        configure_storage(dlg.result)
+        save_storage_config(dlg.result)
+        return True
+
+    if saved:
+        configure_storage(saved)
+        return True
+
+    configure_storage(APP_DIR)
+    return True
+
+
 def launch_gui():
     root = tk.Tk()
+    root.withdraw()
+
+    if not _setup_storage(root):
+        root.destroy()
+        return
+
+    root.deiconify()
     CheckerApp(root)
     root.mainloop()

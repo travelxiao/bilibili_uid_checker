@@ -28,6 +28,6 @@ start "" "%CHROME_PATH%" --remote-debugging-port=9222 --no-first-run --no-defaul
 
 echo [OK] Chrome started!
 echo.
-echo [i] Now run in another terminal: python bilibili_uid_checker.py
+echo [i] Now run: BilibiliUIDChecker.exe  (or: python bilibili_uid_checker.py)
 echo.
 pause

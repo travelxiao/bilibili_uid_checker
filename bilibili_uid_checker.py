@@ -4,8 +4,7 @@ Bilibili UID 检查器
 连接本地 Chrome 浏览器，按配置生成 UID 访问 B 站用户空间，
 筛选出「乱码英文用户名 + Lv0」的命中账号，并记录所有 Lv0 账号。
 
-使用前请先以调试端口启动 Chrome：
-  /Applications/Google Chrome.app/Contents/MacOS/Google Chrome --remote-debugging-port=9222
+程序会自动启动 Chrome 调试模式，无需手动操作。
 """
 
 import random
@@ -16,6 +15,9 @@ import sys
 import json
 import logging
 import threading
+import socket
+import subprocess
+import shutil
 from dataclasses import dataclass, asdict, fields
 from datetime import datetime
 from typing import Callable, List, Optional, Tuple
@@ -24,12 +26,24 @@ from DrissionPage import ChromiumPage, ChromiumOptions
 
 
 # ======================== 配置 ========================
-OUTPUT_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "result.txt")
-LV0_OUTPUT_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lv0.txt")
-RECORDS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "records.json")
-HITS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hits.json")
-LV0_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lv0.json")
-RECORDS_JSONL_LEGACY = os.path.join(os.path.dirname(os.path.abspath(__file__)), "records.jsonl")
+def _app_dir() -> str:
+    """脚本或 exe 所在目录（打包后输出文件写在此处）。"""
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+APP_DIR = _app_dir()
+CONFIG_FILE = os.path.join(APP_DIR, "app_config.json")
+CHROME_PROFILE_DIR = os.path.join(APP_DIR, "chrome_temp_profile")
+
+DATA_DIR = APP_DIR
+OUTPUT_FILE = os.path.join(DATA_DIR, "result.txt")
+LV0_OUTPUT_FILE = os.path.join(DATA_DIR, "lv0.txt")
+RECORDS_FILE = os.path.join(DATA_DIR, "records.json")
+HITS_FILE = os.path.join(DATA_DIR, "hits.json")
+LV0_FILE = os.path.join(DATA_DIR, "lv0.json")
+RECORDS_JSONL_LEGACY = os.path.join(DATA_DIR, "records.jsonl")
 DEFAULT_MIN_DELAY = 2.5
 DEFAULT_MAX_DELAY = 6.0
 DEFAULT_REST_EVERY_N = 25
@@ -45,16 +59,170 @@ FLUSH_INTERVAL = 10
 MIN_UID_LENGTH = 4
 MAX_UID_LENGTH = 10
 
-LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "checker.log")
+LOG_FILE = os.path.join(DATA_DIR, "checker.log")
+_log_file_handler: Optional[logging.FileHandler] = None
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[
-        logging.FileHandler(LOG_FILE, encoding="utf-8"),
-        logging.StreamHandler(sys.stdout),
-    ],
+    handlers=[logging.StreamHandler(sys.stdout)],
 )
 logger = logging.getLogger(__name__)
+
+
+def get_data_dir() -> str:
+    return DATA_DIR
+
+
+def load_storage_config() -> Optional[str]:
+    """读取已保存的数据目录。"""
+    if not os.path.isfile(CONFIG_FILE):
+        return None
+    try:
+        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        data_dir = (payload.get("data_dir") or "").strip()
+        if data_dir and os.path.isdir(data_dir):
+            return os.path.abspath(data_dir)
+    except (IOError, json.JSONDecodeError, TypeError) as e:
+        logger.warning(f"读取配置失败: {e}")
+    return None
+
+
+def save_storage_config(data_dir: str):
+    """保存数据目录到 exe 同目录下的配置文件。"""
+    payload = {
+        "data_dir": os.path.abspath(data_dir),
+        "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+
+
+def _update_log_file(log_path: str):
+    global LOG_FILE, _log_file_handler
+    LOG_FILE = log_path
+    if _log_file_handler:
+        logger.removeHandler(_log_file_handler)
+        _log_file_handler.close()
+        _log_file_handler = None
+    _log_file_handler = logging.FileHandler(log_path, encoding="utf-8")
+    _log_file_handler.setFormatter(
+        logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+    )
+    logger.addHandler(_log_file_handler)
+
+
+def configure_storage(data_dir: str) -> str:
+    """设置记录/日志等文件的存储目录。"""
+    global DATA_DIR, OUTPUT_FILE, LV0_OUTPUT_FILE, RECORDS_FILE, HITS_FILE
+    global LV0_FILE, RECORDS_JSONL_LEGACY
+
+    data_dir = os.path.abspath(data_dir)
+    os.makedirs(data_dir, exist_ok=True)
+
+    DATA_DIR = data_dir
+    OUTPUT_FILE = os.path.join(data_dir, "result.txt")
+    LV0_OUTPUT_FILE = os.path.join(data_dir, "lv0.txt")
+    RECORDS_FILE = os.path.join(data_dir, "records.json")
+    HITS_FILE = os.path.join(data_dir, "hits.json")
+    LV0_FILE = os.path.join(data_dir, "lv0.json")
+    RECORDS_JSONL_LEGACY = os.path.join(data_dir, "records.jsonl")
+    _update_log_file(os.path.join(data_dir, "checker.log"))
+    logger.info(f"数据存储目录: {data_dir}")
+    return data_dir
+
+
+configure_storage(APP_DIR)
+
+
+# ======================== Chrome 自动启动 ========================
+def is_debug_port_open(port: int = DEBUGGING_PORT, host: str = "127.0.0.1") -> bool:
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(1)
+    try:
+        return sock.connect_ex((host, port)) == 0
+    finally:
+        sock.close()
+
+
+def find_chrome_executable() -> Optional[str]:
+    if sys.platform == "win32":
+        candidates = [
+            os.path.expandvars(r"%ProgramFiles%\Google\Chrome\Application\chrome.exe"),
+            os.path.expandvars(r"%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe"),
+            os.path.expandvars(r"%LocalAppData%\Google\Chrome\Application\chrome.exe"),
+        ]
+    elif sys.platform == "darwin":
+        candidates = [
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            os.path.expanduser("~/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+        ]
+    else:
+        candidates = []
+        for name in ("google-chrome-stable", "google-chrome", "chromium-browser", "chromium"):
+            path = shutil.which(name)
+            if path:
+                candidates.append(path)
+    for path in candidates:
+        if path and os.path.isfile(path):
+            return path
+    return None
+
+
+def launch_chrome_debug(port: int = DEBUGGING_PORT) -> Tuple[bool, str]:
+    chrome = find_chrome_executable()
+    if not chrome:
+        return False, "未找到 Google Chrome，请先安装浏览器"
+
+    os.makedirs(CHROME_PROFILE_DIR, exist_ok=True)
+    args = [
+        chrome,
+        f"--remote-debugging-port={port}",
+        "--no-first-run",
+        "--no-default-browser-check",
+        f"--user-data-dir={CHROME_PROFILE_DIR}",
+    ]
+    try:
+        kwargs: dict = {
+            "stdout": subprocess.DEVNULL,
+            "stderr": subprocess.DEVNULL,
+        }
+        if sys.platform == "win32":
+            kwargs["creationflags"] = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+        subprocess.Popen(args, **kwargs)
+        return True, chrome
+    except OSError as e:
+        return False, str(e)
+
+
+def ensure_chrome_debug(
+    port: int = DEBUGGING_PORT,
+    timeout: float = 25.0,
+    on_log: Optional[Callable[[str], None]] = None,
+) -> Tuple[bool, str]:
+    """确保 Chrome 调试端口可用；未运行时自动启动 Chrome。"""
+    log = on_log or (lambda msg: logger.info(msg))
+
+    if is_debug_port_open(port):
+        log(f"Chrome 调试端口 {port} 已就绪")
+        return True, ""
+
+    log("正在自动启动 Chrome 调试模式...")
+    ok, detail = launch_chrome_debug(port)
+    if not ok:
+        return False, detail
+
+    log(f"已启动 Chrome（独立配置，不影响日常浏览器）")
+
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if is_debug_port_open(port):
+            log("Chrome 已就绪，可以开始检查")
+            return True, ""
+        time.sleep(0.5)
+
+    return False, f"Chrome 启动超时（{timeout:.0f} 秒），请检查是否已安装 Chrome"
 
 
 @dataclass
@@ -540,14 +708,19 @@ class RecordStore:
 
 def migrate_legacy_jsonl():
     """将旧版 records.jsonl 迁移为 JSON 格式。"""
-    if not os.path.isfile(RECORDS_JSONL_LEGACY):
+    legacy_paths = [
+        RECORDS_JSONL_LEGACY,
+        os.path.join(APP_DIR, "records.jsonl"),
+    ]
+    legacy_file = next((p for p in legacy_paths if os.path.isfile(p)), None)
+    if not legacy_file:
         return
     if os.path.isfile(RECORDS_FILE):
         return
 
     records: List[CheckRecord] = []
     try:
-        with open(RECORDS_JSONL_LEGACY, "r", encoding="utf-8") as f:
+        with open(legacy_file, "r", encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if not line:
@@ -723,6 +896,11 @@ class CheckerRunner:
         generate_uid = build_uid_generator(prefix, self.config.uid_length)
 
         self.log(f"正在连接本地 Chrome (端口 {DEBUGGING_PORT})...")
+        ok, chrome_err = ensure_chrome_debug(on_log=self.log)
+        if not ok:
+            self.log(f"Chrome 启动失败: {chrome_err}")
+            return
+
         try:
             co = ChromiumOptions()
             co.set_local_port(DEBUGGING_PORT)
@@ -730,7 +908,7 @@ class CheckerRunner:
             self.log("成功连接 Chrome 浏览器")
         except Exception as e:
             self.log(f"连接 Chrome 失败: {e}")
-            self.log("请确保已以调试端口启动 Chrome")
+            self.log("请确认已安装 Google Chrome 后重试")
             return
 
         writer = ResultWriter(OUTPUT_FILE)
@@ -969,6 +1147,9 @@ class CheckerRunner:
 
 def main_cli():
     """命令行模式（保留原有交互方式）。"""
+    saved = load_storage_config()
+    configure_storage(saved or APP_DIR)
+
     logger.info("=" * 55)
     logger.info("   Bilibili UID 检查器 — CLI 模式")
     logger.info(f"   启动时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")

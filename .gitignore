@@ -7,6 +7,7 @@ hits.json
 lv0.json
 lv0.txt
 checker.log
+app_config.json
 
 # Python
 __pycache__/
@@ -35,3 +36,6 @@ Thumbs.db
 
 # Chrome 临时配置
 chrome_temp_profile/
+
+# PyInstaller
+*.spec.bak
