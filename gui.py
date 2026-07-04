@@ -108,9 +108,21 @@ def apply_window_icon(window: tk.Misc):
     if not icon:
         return
     try:
-        window.iconbitmap(icon)
+        window.iconbitmap(default=icon)
     except tk.TclError:
-        pass
+        try:
+            window.iconbitmap(icon)
+        except tk.TclError:
+            pass
+
+
+def _center_window(window: tk.Misc, width: int, height: int):
+    window.update_idletasks()
+    sw = window.winfo_screenwidth()
+    sh = window.winfo_screenheight()
+    x = max((sw - width) // 2, 0)
+    y = max((sh - height) // 2, 0)
+    window.geometry(f"{width}x{height}+{x}+{y}")
 
 
 class StorageSetupDialog(tk.Toplevel):
@@ -188,12 +200,12 @@ class StorageSetupDialog(tk.Toplevel):
         entry.focus_set()
         entry.select_range(0, tk.END)
 
-        self.update_idletasks()
-        w = max(self.winfo_width(), 520)
-        h = self.winfo_height()
-        x = parent.winfo_x() + max((parent.winfo_width() - w) // 2, 0)
-        y = parent.winfo_y() + max((parent.winfo_height() - h) // 2, 0)
-        self.geometry(f"{w}x{h}+{x}+{y}")
+        _center_window(self, 540, 280)
+        self.lift(parent)
+        self.attributes("-topmost", True)
+        self.update()
+        self.after(300, lambda: self.attributes("-topmost", False))
+        self.focus_force()
 
     def _browse(self):
         folder = filedialog.askdirectory(
@@ -255,8 +267,12 @@ class CheckerApp:
         self._setup_styles()
         self._build_menubar()
         self._build_ui()
-        self._load_history_records()
+        self.root.update_idletasks()
         self._poll_queues()
+        self.root.after(10, self._load_history_records)
+        self.root.after(1200, self._start_chrome_background)
+
+    def _start_chrome_background(self):
         threading.Thread(target=self._auto_start_chrome, daemon=True).start()
 
     def _auto_start_chrome(self):
@@ -1384,6 +1400,7 @@ class CheckerApp:
 
 def _setup_storage(parent: tk.Tk) -> bool:
     """启动前配置数据存储目录；有效配置则跳过选择。"""
+    parent.update_idletasks()
     saved_path, exists = read_storage_config()
 
     if saved_path and exists:
@@ -1391,19 +1408,17 @@ def _setup_storage(parent: tk.Tk) -> bool:
             configure_storage(saved_path)
             return True
         except ValueError as e:
-            messagebox.showwarning("存储目录无效", f"{saved_path}\n\n{e}", parent=parent)
+            parent.deiconify()
+            parent.update()
+            messagebox.showwarning(
+                "存储目录无效",
+                f"{saved_path}\n\n{e}",
+                parent=parent,
+            )
 
     missing_path = saved_path if saved_path and not exists else None
     default_dir = saved_path or os.path.join(APP_DIR, "数据")
     required = getattr(sys, "frozen", False) or bool(missing_path)
-
-    if missing_path:
-        messagebox.showwarning(
-            "存储目录不存在",
-            f"之前保存的目录已不存在：\n{missing_path}\n\n请重新选择。",
-            parent=parent,
-        )
-        clear_storage_config()
 
     if not required:
         try:
@@ -1412,6 +1427,17 @@ def _setup_storage(parent: tk.Tk) -> bool:
             required = True
         else:
             return True
+
+    parent.deiconify()
+    parent.update()
+
+    if missing_path:
+        messagebox.showwarning(
+            "存储目录不存在",
+            f"之前保存的目录已不存在：\n{missing_path}\n\n请重新选择。",
+            parent=parent,
+        )
+        clear_storage_config()
 
     dlg = StorageSetupDialog(
         parent,
@@ -1433,13 +1459,18 @@ def _setup_storage(parent: tk.Tk) -> bool:
 
 def launch_gui():
     root = tk.Tk()
-    root.withdraw()
+    root.title("Bilibili UID 检查器")
     apply_window_icon(root)
+    root.withdraw()
+    root.update()
 
     if not _setup_storage(root):
         root.destroy()
         return
 
     root.deiconify()
+    root.state("normal")
+    root.lift()
+    root.focus_force()
     CheckerApp(root)
     root.mainloop()

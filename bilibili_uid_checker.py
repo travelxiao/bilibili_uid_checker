@@ -22,8 +22,7 @@ from dataclasses import dataclass, asdict, fields
 from datetime import datetime
 from typing import Callable, List, Optional, Tuple
 
-from DrissionPage import ChromiumPage, ChromiumOptions
-
+# DrissionPage 延迟导入，加快 exe 启动
 
 # ======================== 配置 ========================
 def _app_dir() -> str:
@@ -82,10 +81,13 @@ def resource_path(relative: str) -> str:
 
 
 def get_app_icon_path() -> Optional[str]:
-    for candidate in (
-        resource_path(os.path.join("assets", "app.ico")),
+    """优先 exe 同目录，其次打包资源目录。"""
+    candidates = [
         os.path.join(APP_DIR, "assets", "app.ico"),
-    ):
+        os.path.join(APP_DIR, "app.ico"),
+        resource_path(os.path.join("assets", "app.ico")),
+    ]
+    for candidate in candidates:
         if os.path.isfile(candidate):
             return candidate
     return None
@@ -196,7 +198,21 @@ def configure_storage(data_dir: str) -> str:
     return data_dir
 
 
-configure_storage(APP_DIR)
+def _init_default_storage():
+    """模块加载时仅设置默认路径，不做磁盘探测。"""
+    global DATA_DIR, OUTPUT_FILE, LV0_OUTPUT_FILE, RECORDS_FILE, HITS_FILE
+    global LV0_FILE, RECORDS_JSONL_LEGACY, LOG_FILE
+    DATA_DIR = APP_DIR
+    OUTPUT_FILE = os.path.join(APP_DIR, "result.txt")
+    LV0_OUTPUT_FILE = os.path.join(APP_DIR, "lv0.txt")
+    RECORDS_FILE = os.path.join(APP_DIR, "records.json")
+    HITS_FILE = os.path.join(APP_DIR, "hits.json")
+    LV0_FILE = os.path.join(APP_DIR, "lv0.json")
+    RECORDS_JSONL_LEGACY = os.path.join(APP_DIR, "records.jsonl")
+    LOG_FILE = os.path.join(APP_DIR, "checker.log")
+
+
+_init_default_storage()
 
 
 # ======================== Chrome 自动启动 ========================
@@ -629,12 +645,18 @@ class RecordStore:
     """持久化保存检查记录与命中结果（JSON 格式）。"""
 
     _file_lock = threading.Lock()
+    _legacy_migrated = False
 
     def __init__(self, flush_interval: int = FLUSH_INTERVAL):
         self.flush_interval = flush_interval
         self._pending: List[CheckRecord] = []
         self._session_records: List[CheckRecord] = []
-        migrate_legacy_jsonl()
+
+    @classmethod
+    def _ensure_legacy_migrated(cls):
+        if not cls._legacy_migrated:
+            migrate_legacy_jsonl()
+            cls._legacy_migrated = True
 
     def append(self, record: CheckRecord):
         self._session_records.append(record)
@@ -767,6 +789,7 @@ class RecordStore:
 
     @classmethod
     def load_all(cls) -> List[CheckRecord]:
+        cls._ensure_legacy_migrated()
         with cls._file_lock:
             return cls._load_all_records_unlocked()
 
@@ -987,6 +1010,8 @@ class CheckerRunner:
             return
 
         try:
+            from DrissionPage import ChromiumPage, ChromiumOptions
+
             co = ChromiumOptions()
             co.set_local_port(DEBUGGING_PORT)
             page = ChromiumPage(co)
@@ -1289,6 +1314,19 @@ def main_cli():
 
 
 if __name__ == "__main__":
+    if getattr(sys, "frozen", False):
+        def _frozen_excepthook(exc_type, exc, tb):
+            import traceback
+            try:
+                crash_log = os.path.join(APP_DIR, "crash.log")
+                with open(crash_log, "a", encoding="utf-8") as f:
+                    traceback.print_exception(exc_type, exc, tb, file=f)
+            except OSError:
+                pass
+            sys.__excepthook__(exc_type, exc, tb)
+
+        sys.excepthook = _frozen_excepthook
+
     if len(sys.argv) > 1 and sys.argv[1] == "--cli":
         main_cli()
     else:
