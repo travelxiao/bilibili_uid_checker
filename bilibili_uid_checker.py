@@ -126,8 +126,11 @@ def validate_storage_path(path: str) -> Tuple[bool, str]:
     norm = os.path.normpath(os.path.abspath(path.strip()))
     if len(norm) > 240:
         return False, "路径过长，请选择较短的路径"
-    root_drive = os.path.splitdrive(norm)[0] + "\\"
-    if norm in (root_drive, os.path.abspath("/")):
+    if sys.platform == "win32":
+        drive = os.path.splitdrive(norm)[0]
+        if drive and norm.rstrip("\\/") == drive.rstrip("\\/"):
+            return False, "不能将磁盘根目录作为存储位置"
+    elif norm == os.path.abspath("/"):
         return False, "不能将磁盘根目录作为存储位置"
 
     try:
@@ -177,6 +180,24 @@ def _update_log_file(log_path: str):
     logger.addHandler(_log_file_handler)
 
 
+def _migrate_root_data_files(data_dir: str):
+    """将项目根目录遗留的数据文件迁入指定存储目录。"""
+    if os.path.normcase(os.path.abspath(data_dir)) == os.path.normcase(os.path.abspath(APP_DIR)):
+        return
+    for name in (
+        "records.json", "hits.json", "lv0.json",
+        "lv0.txt", "result.txt", "records.jsonl",
+    ):
+        src = os.path.join(APP_DIR, name)
+        dst = os.path.join(data_dir, name)
+        if os.path.isfile(src) and not os.path.isfile(dst):
+            try:
+                shutil.move(src, dst)
+                logger.info(f"已迁移遗留数据文件: {name} -> {data_dir}")
+            except OSError as e:
+                logger.warning(f"迁移 {name} 失败: {e}")
+
+
 def configure_storage(data_dir: str) -> str:
     """设置记录/日志等文件的存储目录。"""
     global DATA_DIR, OUTPUT_FILE, LV0_OUTPUT_FILE, RECORDS_FILE, HITS_FILE
@@ -195,6 +216,7 @@ def configure_storage(data_dir: str) -> str:
     LV0_FILE = os.path.join(data_dir, "lv0.json")
     RECORDS_JSONL_LEGACY = os.path.join(data_dir, "records.jsonl")
     _update_log_file(os.path.join(data_dir, "checker.log"))
+    _migrate_root_data_files(data_dir)
     logger.info(f"数据存储目录: {data_dir}")
     return data_dir
 
@@ -671,8 +693,8 @@ class RecordStore:
         with self._file_lock:
             try:
                 existing = self._load_all_records_unlocked()
-                existing.extend(self._pending)
-                self._save_records_unlocked(existing)
+                combined = self._dedupe_records_by_uid(existing + self._pending)
+                self._save_records_unlocked(combined)
 
                 new_hits = [r for r in self._pending if r.status == "hit"]
                 if new_hits:
@@ -742,13 +764,10 @@ class RecordStore:
 
     @staticmethod
     def _dedupe_records_by_uid(records: List[CheckRecord]) -> List[CheckRecord]:
-        seen: set = set()
-        out: List[CheckRecord] = []
+        by_uid: dict = {}
         for rec in records:
-            if rec.uid not in seen:
-                seen.add(rec.uid)
-                out.append(rec)
-        return out
+            by_uid[rec.uid] = rec
+        return list(by_uid.values())
 
     @classmethod
     def _write_json_list(cls, filepath: str, list_key: str, records: List[CheckRecord]):
@@ -792,7 +811,7 @@ class RecordStore:
     def load_all(cls) -> List[CheckRecord]:
         cls._ensure_legacy_migrated()
         with cls._file_lock:
-            return cls._load_all_records_unlocked()
+            return cls._dedupe_records_by_uid(cls._load_all_records_unlocked())
 
     @classmethod
     def load_hits(cls) -> List[CheckRecord]:
@@ -820,6 +839,7 @@ def migrate_legacy_jsonl():
     legacy_paths = [
         RECORDS_JSONL_LEGACY,
         os.path.join(APP_DIR, "records.jsonl"),
+        os.path.join(DEFAULT_DATA_DIR, "records.jsonl"),
     ]
     legacy_file = next((p for p in legacy_paths if os.path.isfile(p)), None)
     if not legacy_file:
@@ -1263,6 +1283,8 @@ def main_cli():
         configure_storage(saved_path)
     else:
         configure_storage(DEFAULT_DATA_DIR)
+        if not (saved_path and exists):
+            save_storage_config(DEFAULT_DATA_DIR)
 
     logger.info("=" * 55)
     logger.info("   Bilibili UID 检查器 — CLI 模式")

@@ -881,13 +881,10 @@ class CheckerApp:
 
     @staticmethod
     def _dedupe_by_uid(records: List[CheckRecord]) -> List[CheckRecord]:
-        seen: set = set()
-        out: List[CheckRecord] = []
+        by_uid: dict = {}
         for r in records:
-            if r.uid not in seen:
-                seen.add(r.uid)
-                out.append(r)
-        return out
+            by_uid[r.uid] = r
+        return list(by_uid.values())
 
     @staticmethod
     def _lv0_values(record: CheckRecord, seq: int) -> tuple:
@@ -1071,12 +1068,11 @@ class CheckerApp:
     def _show_help(self):
         messagebox.showinfo(
             "使用说明",
-            "1. 启动后先选择数据存储目录（记录文件保存位置）\n"
-            "2. 双击 BilibiliUIDChecker.exe 即可运行（会自动启动 Chrome）\n"
-            "3. 配置 UID 前缀与长度，点击「开始检查」\n"
-            "4. 所有 Lv0 账号记录到 lv0.json / lv0.txt\n"
-            "5. 乱码名+Lv0 命中账号记录到 hits.json / result.txt\n"
-            "6. 菜单「文件」可更改数据存储位置",
+            "1. 配置 UID 前缀与长度，点击「开始检查」\n"
+            "2. 程序会自动启动 Chrome，无需手动配置\n"
+            "3. 所有 Lv0 账号记录到 lv0.json / lv0.txt\n"
+            "4. 乱码名+Lv0 命中账号记录到 hits.json / result.txt\n"
+            "5. 菜单「文件」可更改数据存储位置",
         )
 
     def _get_uid_from_tree(self, tree: ttk.Treeview) -> Optional[int]:
@@ -1384,8 +1380,10 @@ class CheckerApp:
 
     def _open_file(self, path: str):
         abs_path = os.path.normpath(os.path.abspath(path))
-        data_dir = os.path.normpath(os.path.abspath(get_data_dir()))
-        if not abs_path.startswith(data_dir + os.sep) and abs_path != data_dir:
+        abs_norm = os.path.normcase(abs_path)
+        data_dir = os.path.normcase(os.path.normpath(os.path.abspath(get_data_dir())))
+        sep = os.path.normcase(os.sep)
+        if abs_norm != data_dir and not abs_norm.startswith(data_dir + sep):
             messagebox.showerror("错误", "只能打开当前数据目录内的文件。")
             return
         if not os.path.isfile(abs_path):
@@ -1427,6 +1425,7 @@ def _setup_storage(parent: tk.Tk) -> bool:
         except ValueError:
             required = True
         else:
+            save_storage_config(DEFAULT_DATA_DIR)
             return True
 
     parent.deiconify()
