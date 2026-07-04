@@ -33,8 +33,11 @@ from bilibili_uid_checker import (
     ensure_chrome_debug,
     configure_storage,
     save_storage_config,
-    load_storage_config,
+    read_storage_config,
+    validate_storage_path,
+    clear_storage_config,
     get_data_dir,
+    get_app_icon_path,
 )
 
 FONT_UI = ("Microsoft YaHei UI", 9)
@@ -100,76 +103,114 @@ COLUMN_LABELS = {
 }
 
 
+def apply_window_icon(window: tk.Misc):
+    icon = get_app_icon_path()
+    if not icon:
+        return
+    try:
+        window.iconbitmap(icon)
+    except tk.TclError:
+        pass
+
+
 class StorageSetupDialog(tk.Toplevel):
     """启动时选择数据存储目录。"""
 
-    def __init__(self, parent: tk.Tk, initial_dir: str, *, required: bool = True):
+    def __init__(
+        self,
+        parent: tk.Tk,
+        initial_dir: str,
+        *,
+        required: bool = True,
+        missing_path: Optional[str] = None,
+    ):
         super().__init__(parent)
         self.title("选择数据存储位置")
-        self.resizable(False, False)
+        self.resizable(True, False)
+        self.minsize(520, 260)
         self.result: Optional[str] = None
         self._required = required
 
+        apply_window_icon(self)
         self.transient(parent)
         self.grab_set()
 
-        frame = ttk.Frame(self, padding=16)
+        frame = ttk.Frame(self, padding=20)
         frame.pack(fill=tk.BOTH, expand=True)
+        frame.columnconfigure(0, weight=1)
 
         ttk.Label(
             frame,
-            text="请选择检查记录的保存目录",
-            font=FONT_UI_BOLD,
-        ).pack(anchor=tk.W)
+            text="数据存储位置",
+            font=FONT_TITLE,
+        ).grid(row=0, column=0, sticky=tk.W)
+
+        if missing_path:
+            warn = ttk.Label(
+                frame,
+                text=f"之前保存的目录已不存在：\n{missing_path}\n请重新选择。",
+                foreground=COLORS["error_fg"],
+                font=FONT_UI,
+                wraplength=460,
+            )
+            warn.grid(row=1, column=0, sticky=tk.W, pady=(8, 0))
+            hint_row = 2
+        else:
+            hint_row = 1
+
         ttk.Label(
             frame,
-            text="lv0.json、hits.json、records.json、result.txt 等将保存在此目录",
+            text="记录文件将保存在此目录，选择后会记住，下次启动无需重复选择。",
             foreground=COLORS["muted"],
             font=FONT_UI,
-        ).pack(anchor=tk.W, pady=(4, 10))
+            wraplength=460,
+        ).grid(row=hint_row, column=0, sticky=tk.W, pady=(8, 12))
 
-        path_row = ttk.Frame(frame)
-        path_row.pack(fill=tk.X, pady=(0, 12))
-        path_row.columnconfigure(0, weight=1)
+        path_row = hint_row + 1
+        path_wrap = ttk.LabelFrame(frame, text="目录路径", padding=(10, 8))
+        path_wrap.grid(row=path_row, column=0, sticky=tk.EW, pady=(0, 14))
+        path_wrap.columnconfigure(0, weight=1)
 
         self.path_var = tk.StringVar(value=initial_dir)
-        ttk.Entry(path_row, textvariable=self.path_var).grid(row=0, column=0, sticky=tk.EW, padx=(0, 8))
-        ttk.Button(path_row, text="浏览…", command=self._browse).grid(row=0, column=1)
+        entry = ttk.Entry(path_wrap, textvariable=self.path_var, font=FONT_UI)
+        entry.grid(row=0, column=0, sticky=tk.EW, padx=(0, 8))
+        ttk.Button(path_wrap, text="浏览…", command=self._browse).grid(row=0, column=1)
 
-        btn_row = ttk.Frame(frame)
-        btn_row.pack(fill=tk.X)
-        ttk.Button(btn_row, text="确定", command=self._confirm).pack(side=tk.RIGHT)
+        btn_row = path_row + 1
+        btn_frame = ttk.Frame(frame)
+        btn_frame.grid(row=btn_row, column=0, sticky=tk.E)
         if not required:
-            ttk.Button(btn_row, text="取消", command=self._cancel).pack(side=tk.RIGHT, padx=(0, 8))
+            ttk.Button(btn_frame, text="取消", command=self._cancel).pack(side=tk.RIGHT, padx=(0, 8))
+        ttk.Button(btn_frame, text="确定并保存", command=self._confirm, style="Accent.TButton").pack(side=tk.RIGHT)
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.bind("<Return>", lambda e: self._confirm())
+        entry.focus_set()
+        entry.select_range(0, tk.END)
 
         self.update_idletasks()
-        w, h = self.winfo_width(), self.winfo_height()
-        x = parent.winfo_x() + (parent.winfo_width() - w) // 2
-        y = parent.winfo_y() + (parent.winfo_height() - h) // 2
-        self.geometry(f"+{x}+{y}")
+        w = max(self.winfo_width(), 520)
+        h = self.winfo_height()
+        x = parent.winfo_x() + max((parent.winfo_width() - w) // 2, 0)
+        y = parent.winfo_y() + max((parent.winfo_height() - h) // 2, 0)
+        self.geometry(f"{w}x{h}+{x}+{y}")
 
     def _browse(self):
         folder = filedialog.askdirectory(
             title="选择数据存储目录",
             initialdir=self.path_var.get() or APP_DIR,
+            parent=self,
         )
         if folder:
             self.path_var.set(folder)
 
     def _confirm(self):
         path = self.path_var.get().strip()
-        if not path:
-            messagebox.showwarning("提示", "请选择或输入一个有效目录。", parent=self)
+        valid, err = validate_storage_path(path)
+        if not valid:
+            messagebox.showerror("目录无效", err, parent=self)
             return
-        try:
-            os.makedirs(path, exist_ok=True)
-        except OSError as e:
-            messagebox.showerror("错误", f"无法创建目录:\n{e}", parent=self)
-            return
-        self.result = os.path.abspath(path)
+        self.result = os.path.normpath(os.path.abspath(path))
         self.grab_release()
         self.destroy()
 
@@ -196,6 +237,7 @@ class CheckerApp:
         self.root.minsize(1024, 720)
         self.root.geometry("1180x820")
         self.root.configure(bg=COLORS["bg"])
+        apply_window_icon(self.root)
 
         self.runner: Optional[CheckerRunner] = None
         self.config_frame: Optional[ttk.LabelFrame] = None
@@ -335,11 +377,21 @@ class CheckerApp:
         if self.runner and self.runner.is_running:
             messagebox.showwarning("提示", "请先停止检查，再更改存储目录。")
             return
-        dlg = StorageSetupDialog(self.root, get_data_dir(), required=False)
+        saved_path, _ = read_storage_config()
+        dlg = StorageSetupDialog(
+            self.root,
+            get_data_dir(),
+            required=False,
+            missing_path=saved_path if saved_path and not os.path.isdir(saved_path) else None,
+        )
         self.root.wait_window(dlg)
         if not dlg.result:
             return
-        configure_storage(dlg.result)
+        try:
+            configure_storage(dlg.result)
+        except ValueError as e:
+            messagebox.showerror("错误", str(e))
+            return
         save_storage_config(dlg.result)
         self._update_data_dir_label()
         self._load_history_records()
@@ -349,13 +401,12 @@ class CheckerApp:
         header = ttk.Frame(parent, style="Header.TFrame", padding=(12, 10))
         header.grid(row=0, column=0, sticky=tk.EW, pady=(0, 8))
         header.columnconfigure(0, weight=1)
-
         ttk.Label(header, text="Bilibili UID 检查器", style="Title.TLabel").grid(row=0, column=0, sticky=tk.W)
         ttk.Label(
             header,
             text="双击 exe 即可使用 · 程序会自动启动 Chrome · Lv0 与命中分开记录",
             style="SubTitle.TLabel",
-        ).grid(row=1, column=0, sticky=tk.W, pady=(2, 0))
+        ).grid(row=1, column=0, columnspan=2, sticky=tk.W, pady=(2, 0))
         self.data_dir_label = ttk.Label(
             header,
             text="",
@@ -363,6 +414,12 @@ class CheckerApp:
             foreground=COLORS["lv0_fg"],
         )
         self.data_dir_label.grid(row=2, column=0, sticky=tk.W, pady=(2, 0))
+        ttk.Button(
+            header,
+            text="更改",
+            command=self._change_storage_dir,
+            width=6,
+        ).grid(row=2, column=1, sticky=tk.E, padx=(8, 0))
         self._update_data_dir_label()
 
     def _build_config_row(self, parent):
@@ -1309,42 +1366,75 @@ class CheckerApp:
         self.root.after(100, self._poll_queues)
 
     def _open_file(self, path: str):
-        if not os.path.isfile(path):
-            messagebox.showinfo("提示", f"文件尚未生成:\n{path}")
+        abs_path = os.path.normpath(os.path.abspath(path))
+        data_dir = os.path.normpath(os.path.abspath(get_data_dir()))
+        if not abs_path.startswith(data_dir + os.sep) and abs_path != data_dir:
+            messagebox.showerror("错误", "只能打开当前数据目录内的文件。")
+            return
+        if not os.path.isfile(abs_path):
+            messagebox.showinfo("提示", f"文件尚未生成:\n{abs_path}")
             return
         if sys.platform == "win32":
-            os.startfile(path)  # type: ignore[attr-defined]
+            os.startfile(abs_path)  # type: ignore[attr-defined]
         elif sys.platform == "darwin":
-            subprocess.run(["open", path], check=False)
+            subprocess.run(["open", abs_path], check=False)
         else:
-            subprocess.run(["xdg-open", path], check=False)
+            subprocess.run(["xdg-open", abs_path], check=False)
 
 
 def _setup_storage(parent: tk.Tk) -> bool:
-    """启动前配置数据存储目录。exe 必须选择，脚本模式使用已保存或默认目录。"""
-    saved = load_storage_config()
-    default_dir = saved or os.path.join(APP_DIR, "数据")
+    """启动前配置数据存储目录；有效配置则跳过选择。"""
+    saved_path, exists = read_storage_config()
 
-    if getattr(sys, "frozen", False):
-        dlg = StorageSetupDialog(parent, default_dir, required=True)
-        parent.wait_window(dlg)
-        if not dlg.result:
-            return False
+    if saved_path and exists:
+        try:
+            configure_storage(saved_path)
+            return True
+        except ValueError as e:
+            messagebox.showwarning("存储目录无效", f"{saved_path}\n\n{e}", parent=parent)
+
+    missing_path = saved_path if saved_path and not exists else None
+    default_dir = saved_path or os.path.join(APP_DIR, "数据")
+    required = getattr(sys, "frozen", False) or bool(missing_path)
+
+    if missing_path:
+        messagebox.showwarning(
+            "存储目录不存在",
+            f"之前保存的目录已不存在：\n{missing_path}\n\n请重新选择。",
+            parent=parent,
+        )
+        clear_storage_config()
+
+    if not required:
+        try:
+            configure_storage(APP_DIR)
+        except ValueError:
+            required = True
+        else:
+            return True
+
+    dlg = StorageSetupDialog(
+        parent,
+        default_dir,
+        required=required,
+        missing_path=missing_path,
+    )
+    parent.wait_window(dlg)
+    if not dlg.result:
+        return False
+    try:
         configure_storage(dlg.result)
-        save_storage_config(dlg.result)
-        return True
-
-    if saved:
-        configure_storage(saved)
-        return True
-
-    configure_storage(APP_DIR)
+    except ValueError as e:
+        messagebox.showerror("错误", str(e), parent=parent)
+        return False
+    save_storage_config(dlg.result)
     return True
 
 
 def launch_gui():
     root = tk.Tk()
     root.withdraw()
+    apply_window_icon(root)
 
     if not _setup_storage(root):
         root.destroy()

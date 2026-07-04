@@ -7,7 +7,10 @@ a = Analysis(
     ['bilibili_uid_checker.py'],
     pathex=[],
     binaries=[],
-    datas=[('start_chrome_windows.bat', '.')],
+    datas=[
+        ('start_chrome_windows.bat', '.'),
+        ('assets/app.ico', 'assets'),
+    ],
     hiddenimports=[
         'gui',
         'DrissionPage',
@@ -44,5 +47,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=None,
+    icon='assets/app.ico',
 )

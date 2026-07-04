@@ -56,6 +56,7 @@ DEBUGGING_PORT = 9222
 MAX_RETRIES = 3
 RETRY_DELAY = 3
 FLUSH_INTERVAL = 10
+MAX_STORED_RECORDS = 50000
 MIN_UID_LENGTH = 4
 MAX_UID_LENGTH = 10
 
@@ -74,29 +75,89 @@ def get_data_dir() -> str:
     return DATA_DIR
 
 
-def load_storage_config() -> Optional[str]:
-    """读取已保存的数据目录。"""
-    if not os.path.isfile(CONFIG_FILE):
-        return None
-    try:
-        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-            payload = json.load(f)
-        data_dir = (payload.get("data_dir") or "").strip()
-        if data_dir and os.path.isdir(data_dir):
-            return os.path.abspath(data_dir)
-    except (IOError, json.JSONDecodeError, TypeError) as e:
-        logger.warning(f"读取配置失败: {e}")
+def resource_path(relative: str) -> str:
+    """获取内置资源路径（兼容 PyInstaller 打包）。"""
+    base = getattr(sys, "_MEIPASS", APP_DIR)
+    return os.path.join(base, relative)
+
+
+def get_app_icon_path() -> Optional[str]:
+    for candidate in (
+        resource_path(os.path.join("assets", "app.ico")),
+        os.path.join(APP_DIR, "assets", "app.ico"),
+    ):
+        if os.path.isfile(candidate):
+            return candidate
     return None
 
 
+def read_storage_config() -> Tuple[Optional[str], bool]:
+    """读取配置，返回 (目录路径, 目录是否存在)。"""
+    if not os.path.isfile(CONFIG_FILE):
+        return None, False
+    try:
+        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        if not isinstance(payload, dict):
+            return None, False
+        data_dir = (payload.get("data_dir") or "").strip()
+        if not data_dir:
+            return None, False
+        data_dir = os.path.normpath(os.path.abspath(data_dir))
+        return data_dir, os.path.isdir(data_dir)
+    except (IOError, json.JSONDecodeError, TypeError, OSError) as e:
+        logger.warning(f"读取配置失败: {e}")
+        return None, False
+
+
+def load_storage_config() -> Optional[str]:
+    """读取有效（目录存在）的存储路径。"""
+    data_dir, exists = read_storage_config()
+    return data_dir if exists else None
+
+
+def validate_storage_path(path: str) -> Tuple[bool, str]:
+    """校验存储目录是否可用（存在或可创建、可写）。"""
+    if not path or not str(path).strip():
+        return False, "路径不能为空"
+    norm = os.path.normpath(os.path.abspath(path.strip()))
+    if len(norm) > 240:
+        return False, "路径过长，请选择较短的路径"
+    root_drive = os.path.splitdrive(norm)[0] + "\\"
+    if norm in (root_drive, os.path.abspath("/")):
+        return False, "不能将磁盘根目录作为存储位置"
+
+    try:
+        os.makedirs(norm, exist_ok=True)
+        probe = os.path.join(norm, ".write_probe")
+        with open(probe, "w", encoding="utf-8") as f:
+            f.write("ok")
+        os.remove(probe)
+    except OSError as e:
+        return False, f"目录不可用: {e}"
+    return True, ""
+
+
 def save_storage_config(data_dir: str):
-    """保存数据目录到 exe 同目录下的配置文件。"""
+    """原子写入配置，避免中断导致损坏。"""
+    norm = os.path.normpath(os.path.abspath(data_dir))
     payload = {
-        "data_dir": os.path.abspath(data_dir),
+        "data_dir": norm,
         "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
-    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+    tmp_path = CONFIG_FILE + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
+    os.replace(tmp_path, CONFIG_FILE)
+    logger.info(f"已保存存储配置: {norm}")
+
+
+def clear_storage_config():
+    if os.path.isfile(CONFIG_FILE):
+        try:
+            os.remove(CONFIG_FILE)
+        except OSError as e:
+            logger.warning(f"清除配置失败: {e}")
 
 
 def _update_log_file(log_path: str):
@@ -118,9 +179,11 @@ def configure_storage(data_dir: str) -> str:
     global DATA_DIR, OUTPUT_FILE, LV0_OUTPUT_FILE, RECORDS_FILE, HITS_FILE
     global LV0_FILE, RECORDS_JSONL_LEGACY
 
-    data_dir = os.path.abspath(data_dir)
-    os.makedirs(data_dir, exist_ok=True)
+    valid, err = validate_storage_path(data_dir)
+    if not valid:
+        raise ValueError(err)
 
+    data_dir = os.path.normpath(os.path.abspath(data_dir))
     DATA_DIR = data_dir
     OUTPUT_FILE = os.path.join(data_dir, "result.txt")
     LV0_OUTPUT_FILE = os.path.join(data_dir, "lv0.txt")
@@ -592,12 +655,14 @@ class RecordStore:
                 if new_hits:
                     hits = self._load_hits_unlocked()
                     hits.extend(new_hits)
+                    hits = self._dedupe_records_by_uid(hits)
                     self._save_hits_unlocked(hits)
 
                 new_lv0 = [r for r in self._pending if r.is_lv0_account]
                 if new_lv0:
                     lv0_list = self._load_lv0_unlocked()
                     lv0_list.extend(new_lv0)
+                    lv0_list = self._dedupe_records_by_uid(lv0_list)
                     self._save_lv0_unlocked(lv0_list)
 
                 logger.debug(f"已保存 {len(self._pending)} 条记录到 JSON")
@@ -621,8 +686,10 @@ class RecordStore:
         try:
             known = {f.name for f in fields(CheckRecord)}
             filtered = {k: v for k, v in data.items() if k in known}
+            if "uid" in filtered:
+                filtered["uid"] = int(filtered["uid"])
             return CheckRecord(**filtered)
-        except TypeError:
+        except (TypeError, ValueError):
             return None
 
     @classmethod
@@ -635,6 +702,10 @@ class RecordStore:
             if not isinstance(payload, dict):
                 return []
             items = payload.get(list_key, [])
+            if not isinstance(items, list):
+                return []
+            if len(items) > MAX_STORED_RECORDS:
+                items = items[-MAX_STORED_RECORDS:]
             records = []
             for item in items:
                 if isinstance(item, dict):
@@ -646,15 +717,29 @@ class RecordStore:
             logger.error(f"读取 {filepath} 失败: {e}")
             return []
 
+    @staticmethod
+    def _dedupe_records_by_uid(records: List[CheckRecord]) -> List[CheckRecord]:
+        seen: set = set()
+        out: List[CheckRecord] = []
+        for rec in records:
+            if rec.uid not in seen:
+                seen.add(rec.uid)
+                out.append(rec)
+        return out
+
     @classmethod
     def _write_json_list(cls, filepath: str, list_key: str, records: List[CheckRecord]):
+        if len(records) > MAX_STORED_RECORDS:
+            records = records[-MAX_STORED_RECORDS:]
         payload = {
             "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "count": len(records),
             list_key: [cls._record_to_dict(r) for r in records],
         }
-        with open(filepath, "w", encoding="utf-8") as f:
+        tmp_path = filepath + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, filepath)
 
     @classmethod
     def _load_all_records_unlocked(cls) -> List[CheckRecord]:
@@ -1147,8 +1232,11 @@ class CheckerRunner:
 
 def main_cli():
     """命令行模式（保留原有交互方式）。"""
-    saved = load_storage_config()
-    configure_storage(saved or APP_DIR)
+    saved_path, exists = read_storage_config()
+    if saved_path and exists:
+        configure_storage(saved_path)
+    else:
+        configure_storage(APP_DIR)
 
     logger.info("=" * 55)
     logger.info("   Bilibili UID 检查器 — CLI 模式")
